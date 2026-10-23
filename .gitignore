@@ -2,4 +2,4 @@ data/raw/
 __pycache__/
 .ipynb_checkpoints/
 models/
-results/git check-ignore -v data/raw/cwru/normal/97.matgit add
+results/git check-ignore -v data/raw/cwru/normal/97.matgit adddata/processed/
