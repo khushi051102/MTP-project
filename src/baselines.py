@@ -23,7 +23,7 @@ from .signal_proc import time_features
 
 try:
     from xgboost import XGBClassifier, XGBRegressor
-except ImportError:          # pip install xgboost
+except ImportError:       
     XGBClassifier = XGBRegressor = None
 
 

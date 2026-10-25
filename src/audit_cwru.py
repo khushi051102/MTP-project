@@ -5,11 +5,12 @@ Run from the project root:   python -m src.audit_cwru
 import pandas as pd
 
 from .config import CWRU_RAW, RESULTS
-from .cwru_meta import build_metadata
+from .cwru_meta import build_metadata  #builds a pandas table describing every file that 
+#should exist: its path, fault type, fault diameter, position, load, sampling rate and nominal RPM.
 from .data_loader import load_cwru_file
 
-DURATION_RANGE_S = (4.0, 13.0)   # sanity range, NOT a rule: some files are ~5 s
-RPM_TOLERANCE = 30               # measured vs nominal rpm, loose on purpose
+DURATION_RANGE_S = (4.0, 13.0)   # sanity range,recordings should normally last between 4 and 13 seconds
+RPM_TOLERANCE = 30               # the measured RPM may differ from the expected RPM by up to 30.
 
 
 def run_audit(raw_root=CWRU_RAW, save=True) -> pd.DataFrame:
@@ -43,7 +44,7 @@ def run_audit(raw_root=CWRU_RAW, save=True) -> pd.DataFrame:
     meta["flag_duration"] = (meta["duration_s"] < lo) | (meta["duration_s"] > hi)
     meta["flag_rpm"] = meta["rpm_diff"].abs() > RPM_TOLERANCE
 
-    # 5) within a group, measured rpm must fall as load rises 0 -> 3 HP
+    # 5) Check that RPM drops as load rises
     keys = ["fault_type", "diameter_in", "position"]
     meta["flag_rpm_order"] = False
     for _, g in meta.groupby(keys, dropna=False):
