@@ -36,35 +36,45 @@ def expected_fault_freq(fault_type: str, rpm: float):
 
 
 # ---------------------------------------------------------------- part 3
-def harmonic_score(sig: np.ndarray, fs: float, shaft_hz: float,
-                   n_harm: int = 4, half_bw: float = 1.5) -> float:
-    """How strongly does the spectrum show peaks at 1X..nX shaft speed IF the
-    sampling rate were `fs`?  Peak height is measured relative to the median
-    spectral level in 5-300 Hz, so a value near 1 means 'no visible peak'."""
+def top_half_energy(sig: np.ndarray) -> float:
+    """Energy fraction above per-sample frequency 0.25 (top half of the band).
+
+    Per-sample frequency p means true frequency p * fs, so p in (0.25, 0.5] is
+    12-24 kHz if fs = 48k but only 3-6 kHz if fs = 12k. Bearing/structural
+    resonances live at 3-6 kHz, so a REAL 12 kHz recording keeps a large share
+    of its energy in that band (105.mat, known 12 kHz: ~40 %), while a 48 kHz
+    recording low-passed near 12 kHz by the acquisition filter shows a hard
+    cliff there (<1 %).
+
+    Replaces the old shaft-comb test, which could not discriminate: a 30-120 Hz
+    comb sits far below both Nyquist limits, so it lights up under EITHER
+    assumed fs and the verdict degenerated to noise-skirt comparison.
+    """
     x = sig - sig.mean()
-    spec = np.abs(np.fft.rfft(x * np.hanning(x.size)))
-    freqs = np.fft.rfftfreq(x.size, d=1.0 / fs)
-    floor = np.median(spec[(freqs > 5) & (freqs < 300)])
-    ratios = []
-    for h in range(1, n_harm + 1):
-        m = (freqs > h * shaft_hz - half_bw) & (freqs < h * shaft_hz + half_bw)
-        ratios.append(spec[m].max() / floor)
-    return float(np.mean(ratios))
+    S = np.abs(np.fft.rfft(x * np.hanning(x.size))) ** 2
+    ps = np.fft.rfftfreq(x.size)          # cycles per SAMPLE, fs-independent
+    return float(S[ps > 0.25].sum() / S.sum())
 
 
-def sampling_rate_test(sig: np.ndarray, rpm: float, candidates=(48_000, 12_000)):
-    """Score each candidate sampling rate; the true one should place the shaft
-    harmonics at rpm/60 Hz. Returns (scores dict, verdict string)."""
-    shaft_hz = rpm / 60.0
-    scores = {fs: harmonic_score(sig, fs, shaft_hz) for fs in candidates}
-    a, b = candidates
-    if scores[a] > 2 * scores[b]:
-        verdict = f"looks like {a} Hz"
-    elif scores[b] > 2 * scores[a]:
-        verdict = f"looks like {b} Hz"
+def sampling_rate_test(sig: np.ndarray, rpm: float, candidates=(48_000, 12_000),
+                       hi: float = 0.05, lo: float = 0.01):
+    """Decide between candidate sampling rates from the signal itself.
+
+    Returns (E_top from top_half_energy, verdict). Calibrated on two ground
+    truths: 105.mat (known 12 kHz) E_top = 0.40 -> '12000'; official normal
+    files 97-100 (48 kHz per the CWRU download page) E_top < 0.01 -> '48000'.
+    `rpm` is kept for call compatibility; the test no longer needs it.
+    Limitation: a hypothetical 12 kHz recording with no energy above 3 kHz
+    would read '48000'; audit_cwru's duration check cross-guards that case.
+    """
+    e = top_half_energy(sig)
+    if e >= hi:
+        verdict = f"looks like {candidates[1]} Hz"
+    elif e <= lo:
+        verdict = f"looks like {candidates[0]} Hz"
     else:
         verdict = "INCONCLUSIVE"
-    return scores, verdict
+    return e, verdict
 
 
 def run_verify(raw_root=CWRU_RAW, save=True) -> pd.DataFrame:
@@ -98,9 +108,9 @@ def run_verify(raw_root=CWRU_RAW, save=True) -> pd.DataFrame:
         row = meta[meta["relpath"] == rel].iloc[0]
         rec = load_cwru_file(path, row.fs_native, target_fs=row.fs_native)
         rpm = rec.rpm if rec.rpm is not None else row.nominal_rpm
-        scores, verdict = sampling_rate_test(rec.signal, rpm)
+        e_top, verdict = sampling_rate_test(rec.signal, rpm)
         tag = f"(known {known_fs} Hz)" if known_fs else "(unknown)"
-        print(f"{rel:22s} {tag:18s} score@48k={scores[48000]:.1f}  score@12k={scores[12000]:.1f}  -> {verdict}")
+        print(f"{rel:22s} {tag:18s} E(top half)={e_top:.3f}  -> {verdict}")
 
     if save:
         RESULTS.mkdir(exist_ok=True)

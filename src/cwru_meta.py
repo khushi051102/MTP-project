@@ -1,8 +1,14 @@
 """CWRU metadata: which file number is which class / diameter / load.
 
-WARNING: file numbers were checked against the official CWRU tables on 2026-10-23 
-(40 of 40 rows match, using verify_cwru.py), 
-and that the Normal sampling rate is still a flagged assumption.
+File numbers were checked against the official CWRU tables on 2026-10-23
+(40 of 40 rows match, using verify_cwru.py).
+
+VERIFIED 2026-10-25: the Normal-baseline sampling rate is 48 kHz, no longer an
+assumption. Evidence (verify_cwru.py part 3, official files): all four normal
+files keep < 0.3 % of their energy above per-sample frequency 0.25 (i.e. above
+12 kHz -> impossible for a 12 kHz recording) while the known-12 kHz fault file
+105.mat keeps 40 % in its top band (3-6 kHz). Sample counts agree: 97.mat has
+243,938 samples = 5.08 s at 48 kHz (would be an implausible 20.3 s at 12 kHz).
 """
 import pandas as pd
 

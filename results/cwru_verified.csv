@@ -1,8 +1,8 @@
 file_id,fault_type,diameter_in,position,load_hp,nominal_rpm,fs_native,relpath,shaft_hz,expected_fault_hz
-97,normal,,,0,1797,12000,normal/97.mat,29.933333333333334,
-98,normal,,,1,1772,12000,normal/98.mat,29.533333333333335,
-99,normal,,,2,1750,12000,normal/99.mat,29.166666666666668,
-100,normal,,,3,1730,12000,normal/100.mat,28.75,
+97,normal,,,0,1797,48000,normal/97.mat,29.933333333333334,
+98,normal,,,1,1772,48000,normal/98.mat,29.533333333333335,
+99,normal,,,2,1750,48000,normal/99.mat,29.166666666666668,
+100,normal,,,3,1730,48000,normal/100.mat,28.75,
 105,inner_race,0.007,,0,1797,12000,inner_race/105.mat,29.95,162.18523999999996
 106,inner_race,0.007,,1,1772,12000,inner_race/106.mat,29.533333333333335,159.92890666666665
 107,inner_race,0.007,,2,1750,12000,inner_race/107.mat,29.133333333333333,157.76282666666665

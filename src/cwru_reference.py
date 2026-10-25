@@ -34,8 +34,10 @@ MULT = {
     "BPFI": 5.4152,    # inner ring
     "BPFO": 3.5848,    # outer ring
     "FTF":  0.39828,   # cage (fundamental train frequency)
-    "BSF":  4.7135,    # rolling element (ball spin)
+    "BSF":  2.357,     # rolling element SPIN (matches the section-1.3 geometric formula)
+    "BSF2": 4.7135,    # ball DEFECT impact rate = 2xBSF: the ball hits the inner
+                       # AND outer race once per revolution, so impacts come in pairs
 }
 
-# which defect frequency belongs to which class
-CLASS_TO_FREQ = {"inner_race": "BPFI", "outer_race": "BPFO", "ball": "BSF"}
+# which defect frequency belongs to which class (ball fault -> 2xBSF, see MULT)
+CLASS_TO_FREQ = {"inner_race": "BPFI", "outer_race": "BPFO", "ball": "BSF2"}
