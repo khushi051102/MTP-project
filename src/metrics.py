@@ -19,3 +19,4 @@ def nasa_score(y_true, y_pred) -> float:
     it happens is the dangerous mistake in maintenance."""
     d = np.asarray(y_pred, float) - np.asarray(y_true, float)
     return float(np.sum(np.where(d < 0, np.exp(-d / 13.0) - 1.0, np.exp(d / 10.0) - 1.0)))
+
