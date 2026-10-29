@@ -59,7 +59,9 @@ def train_classifier(model, X_tr, y_tr, epochs=20, lr=2e-3, wd=1e-2, bs=128,
     """Fixed number of epochs, AdamW + one-cycle learning-rate schedule.
     No early stopping on the test fold: the epoch count is chosen in advance."""
     device = device or get_device()
-    set_seed(seed)
+    set_seed(seed)                                  # controls the order of the batches
+    torch.backends.cudnn.deterministic = True       # same results on repeated GPU runs
+    torch.backends.cudnn.benchmark = False
     model = model.to(device)
     ds = TensorDataset(torch.as_tensor(X_tr, dtype=torch.float32), torch.as_tensor(y_tr, dtype=torch.long))
     dl = DataLoader(ds, batch_size=bs, shuffle=True, generator=torch.Generator().manual_seed(seed))
@@ -131,6 +133,7 @@ def run_cwru_cnn(X, info, epochs=20, width=16, seed=SEED, verbose=True):
     for test_load in range(4):
         tr, _, te = split_by_load(info, test_load, None)
         scale = float(X[tr].std())
+        set_seed(seed)                                   # seeds the INITIAL WEIGHTS (created on the next line)
         model = CNN1D(n_classes=int(y.max()) + 1, width=width)
         if verbose:
             print(f"fold: test load {test_load} HP  (train {len(tr)}, test {len(te)})", flush=True)
