@@ -17,16 +17,16 @@ from .utils import set_seed
 
 # ------------------------------------------------------------------ models
 class GRUReg(nn.Module):
-    """One GRU layer; the last hidden state summarises the 30 snapshots."""
+    """GRU layer(s); the last layer's final hidden state summarises the 30 snapshots."""
 
-    def __init__(self, n_in=8, hidden=32):
+    def __init__(self, n_in=8, hidden=32, layers=1):
         super().__init__()
-        self.gru = nn.GRU(n_in, hidden, batch_first=True)
+        self.gru = nn.GRU(n_in, hidden, num_layers=layers, batch_first=True)
         self.head = nn.Linear(hidden, 1)
 
     def forward(self, x):                       # x: (batch, time, features)
-        _, h = self.gru(x)                      # h: (1, batch, hidden)
-        return torch.sigmoid(self.head(h[-1])).squeeze(-1)   # (batch,), inside (0, 1)
+        _, h = self.gru(x)                      # h: (layers, batch, hidden)
+        return torch.sigmoid(self.head(h[-1])).squeeze(-1)   # last layer -> (batch,), inside (0, 1)
 
 
 class TCNReg(nn.Module):
@@ -61,7 +61,13 @@ class TransReg(nn.Module):
         return torch.sigmoid(self.head(z.mean(dim=1))).squeeze(-1)
 
 
-MODELS = {"GRU": GRUReg, "TCN": TCNReg, "Transformer": TransReg}
+MODELS = {
+    # small models (the edge candidates)
+    "GRU": GRUReg, "TCN": TCNReg, "Transformer": TransReg,
+    # heavier versions of the same designs (the "heavy pipeline" side of the comparison)
+    "GRU-L": lambda: GRUReg(hidden=256, layers=2),
+    "Transformer-L": lambda: TransReg(d=128, heads=8, layers=4, ff=512),
+}
 
 
 # ---------------------------------------------------------------- training
