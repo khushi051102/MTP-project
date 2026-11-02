@@ -1,6 +1,6 @@
 # Assumptions log
 
-Status words: **verified** (checked against an external source or by a test), **supported** (evidence from my own data, not conclusive), **chosen** (my decision, not derived), **risk** (known weakness), **resolved**, **unreliable**.
+Status words: **verified** (checked against an external source or by a test), **measured** (a result from my own runs), **supported** (evidence from my own data, not conclusive), **chosen** (my decision, not derived), **risk** (known weakness), **limitation**, **resolved**, **unreliable**.
 
 ## CWRU (bearing fault classification)
 
@@ -61,3 +61,38 @@ Status words: **verified** (checked against an external source or by a test), **
 | ID | Assumption | How I checked it | Status |
 |----|------------|------------------|--------|
 | A36 | Seeds are pinned with set_seed(42) at the top of every notebook; data/raw is read-only (chmod -R a-w) | Done; raw data and processed data are excluded from git | verified |
+
+## Phase 3: classical baselines (CWRU and FEMTO)
+
+| ID | Assumption | How I checked it | Status |
+|----|------------|------------------|--------|
+| A37 | CWRU baseline features: 27 per window (10 time-domain, 16 log band energies of 375 Hz each over 0-6 kHz, spectral centroid). FEMTO baseline inputs: last value, mean, standard deviation and change over the 30-snapshot window for each of 8 features (32 numbers) | Defined in baselines.py and the Phase 3 notebook | chosen |
+| A38 | Model settings are not tuned: CWRU LogReg (standardised), tree depth 10, Random Forest 200 trees, XGBoost 200 trees depth 6 learning rate 0.1, SVM RBF with C=10. FEMTO tree depth 8 leaf 20, Random Forest 100 trees with a third of the features per split, leaf 10, half the rows per tree, XGBoost 300 trees depth 5 learning rate 0.05 | The lighter Random Forest was chosen because the first version took over 3 minutes per fold in a one-core test | chosen |
+| A39 | CWRU leave-one-load-out accuracy: Random Forest 0.996 +- 0.002 over 5 seeds (0 HP 0.986 +- 0.007), LogReg 0.960, XGBoost 0.941, tree 0.912, SVM 0.909 (0 HP only 0.636). Random window split gives about 1.0 for all | Phase 3 runs | measured |
+| A40 | Permutation importance (Random Forest, held-out load): band 10 (3.75-4.1 kHz) is by far the largest, band 15 (5.6-6 kHz) second. Correlated features share importance, so the bars are small | Importance plot; band 15 keeps the filter-artifact concern of A13 open | supported |
+| A41 | FEMTO prognosis, macro MAE on post-FPT snapshots, one seed: no-skill 0.500, LinReg 0.241, tree 0.255, Random Forest 0.237, XGBoost 0.249. Spread across bearings is about 0.1, paired Random Forest minus LinReg is -0.004 with standard error 0.021, so there is no reliable winner. Pooled over snapshots: Random Forest 0.120, XGBoost 0.147, tree 0.217, LinReg 0.231, so the ranking depends on how the error is averaged | 17-fold leave-one-bearing-out | measured |
+| A42 | Bearings with fewer than 15 post-FPT snapshots (5 of 17) give noisy scores. Bearings 2_5 and 3_3 fail for every model; for 3_3 my guess is that it is the only gradual bearing in condition 3 (not tested) | Per-bearing table | limitation |
+| A43 | FEMTO detection (healthy versus post-FPT), alarm after 5 consecutive positives. LogReg recall 0.887, false-alarm rate 0.039, median delay 0.5 snapshots; Random Forest 0.834 / 0.085 / 3.5; XGBoost 0.838 / 0.123 / -12; tree 0.792 / 0.128 / -26.5. One bearing never alarms for any model (probably 2_4, which has only 4 post-FPT snapshots, fewer than the run length) | 17-fold leave-one-bearing-out | measured |
+| A44 | Early alarms of LogReg (more than 5 minutes before FPT): 1_1, 1_7 and 2_2 coincide with weak precursors or the hump that I left out of the label; 1_6 and 2_3 coincide with short transient bursts (real false alarms). Longer persistence trades false alarms for missed warnings: run 5/10/20/30 gives early alarms 5/4/4/2, late alarms 0/1/2/4, bearings without alarm 1/3/5/8. Run 5 kept | Alarm-persistence table | measured |
+| A45 | The FPT label is derived from horizontal RMS, which is also an input, so part of the detection and RUL accuracy is agreement with my rule. Without rms_h: LinReg 0.241, Random Forest 0.251, recall 0.889, false-alarm rate 0.050 (with all features 0.241, 0.237, 0.887, 0.039). Shape features only: MAE 0.337 and 0.334, recall 0.611, false alarms 0.137. The models are not merely echoing the rule, and amplitude carries most of the information | Ablations | supported |
+| A46 | A 30-snapshot window mainly reduces false alarms: last snapshot only gives false-alarm rate 0.097 (recall 0.880, MAE 0.268 and 0.260); adding the standard deviation gives 0.038 (recall 0.888, MAE 0.241 and 0.241); adding the trend changes nothing. The Random Forest used 50 trees in this test, so its numbers differ slightly from A41 | Window-feature ablation | supported |
+| A47 | C-MAPSS is secondary: baselines on all four sets, no further importance or window study | Decision | chosen |
+
+## Phase 4: deep learning
+
+| ID | Assumption | How I checked it | Status |
+|----|------------|------------------|--------|
+| A48 | Training protocol: number of epochs fixed in advance (CNN 20, FEMTO models 15), AdamW with learning rate 2e-3 and weight decay 1e-2, one-cycle schedule, batch size 128 (CNN) and 256 (FEMTO). No early stopping, so nothing is selected on a test fold | Design | chosen |
+| A49 | Seeding: the seed is set before the model is created and GPU kernels are deterministic. My first version seeded only the batch order, so the earliest CNN numbers must not be used | Repeating seed 1 gave identical fold accuracies [0.7652, 0.983, 1.0, 0.9864] on the Colab GPU | verified |
+| A50 | 1D CNN (21,994 parameters, 85.9 KB) on raw windows, input divided by one global scalar (training standard deviation) so amplitude is kept. 5 seeds: accuracy 0.949 +- 0.025, 0 HP 0.854 +- 0.077 (seed range 0.765-0.955); Random Forest 0.996 +- 0.002. The CNN is not better; its errors are only between ball sizes at 0 HP | Phase 4 runs | measured |
+| A51 | FEMTO sequence inputs: 8 log ratios to each bearing's own median over snapshots 100-199, sequences of 30 snapshots ending at snapshot 200 or later (21,233 sequences, 3,094 post-FPT), standardised with training-bearing statistics | The baseline window sits before every FPT (earliest 223); weak for Bearing2_5, whose run-in lasts about 500 snapshots | chosen |
+| A52 | Loss: L1 with weight 4 on post-FPT snapshots (untuned), sigmoid output in (0, 1) | Design | chosen |
+| A53 | Macro MAE on post-FPT snapshots: GRU (4,065 parameters) 0.251 +- 0.010 over 3 seeds (0.251, 0.242, 0.261); Transformer (18,369) 0.256 +- 0.007 (0.262, 0.257, 0.248); TCN (9,793) 0.329 +- 0.006 (0.329, 0.335, 0.323). Seed spread (about 0.01) is far smaller than the spread across bearings (about 0.11-0.14). The networks match the classical models (0.237-0.255) but do not beat them | Phase 4 runs; seed 2 and 3 values confirmed against the printed table | measured |
+| A54 | The GRU is best on most single bearings (5 of 17 across all seven models, seed 1; Bearing1_1: 0.049 against 0.108 for the Random Forest), so memory helps on the long gradual degradation but not on abrupt failures | Per-bearing table, seed 1 | supported |
+| A55 | Skipped on purpose: CNN-LSTM, Mamba-style state-space model, MC-dropout, early stopping, deep models on C-MAPSS | Decision, for time | chosen |
+| A56 | Colab timings are not used as evidence; latency, memory and size are measured only on my laptop with one CPU thread (Phase 6) | Design | chosen |
+| A57 | Heavy variants are my own larger versions of the same designs, trained with the same recipe: GRU-L (2 layers, 256 hidden, 599,297 parameters), Transformer-L (4 layers, width 128, 8 heads, 798,209), CNN width 128 (1,294,090). They are not cloud LLMs | Parameter counts printed by the code match the hand count | chosen |
+| A58 | CWRU, leave-one-load-out, 5 seeds: wide CNN accuracy 0.961 +- 0.015 (0 HP 0.883 +- 0.026) against small CNN 0.949 +- 0.025 (0 HP 0.854 +- 0.077) and Random Forest 0.996 +- 0.002. The 59 times larger CNN gains 0.012, which is inside the seed spread; it is more stable, and capacity does not close the gap to the Random Forest | Phase 4 runs | measured |
+| A59 | FEMTO, macro MAE on post-FPT snapshots, 3 seeds each: GRU 0.251 +- 0.010 (4,065 parameters), Transformer 0.256 +- 0.007 (18,369), Transformer-L 0.255 +- 0.003 (798,209), GRU-L 0.288 +- 0.020 (599,297), TCN 0.329 +- 0.006 (9,793). The classical models score 0.237-0.255, so no neural model beats them. The GRU with 4k parameters equals Transformer-L with about 200 times more | Final Phase 4 table | measured |
+| A60 | The larger GRU is worse than the small one by about 0.037 (about two seed spreads). My guess is overfitting, since 17 bearings exist and two supply 82 percent of the degradation data; not tested | Three seeds only | limitation |
+| A61 | Phase 4 conclusion: small models are enough on both datasets; neural networks do not beat Random Forest or linear regression. The claim for the SLM must therefore be "matches at lower cost", not "outperforms", and its comparison table must include the Random Forest and linear baselines | Based on A39, A41, A50, A58 and A59 | chosen |
