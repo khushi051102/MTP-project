@@ -1,9 +1,16 @@
-"""Phase 4.2: small sequence models for FEMTO (leave-one-bearing-out, multi-seed).
+"""Phase 4: sequence models for FEMTO (leave-one-bearing-out, multi-seed).
+
+Small models (GRU, TCN, Transformer) are the edge candidates; GRU-L and
+Transformer-L are ~100x larger versions of the same designs, trained with the
+SAME recipe (epochs, lr, weight decay) so that only model size changes.
 
 Input: sequences (n, 30, 8) of log-ratio features; target: rul_frac in [0, 1]
 (1.0 until the first predicting time, then falling to 0). Headline metric: macro
 MAE over the post-FPT snapshots of each held-out bearing (no-skill baseline = 0.5).
 """
+import subprocess
+import time
+
 import numpy as np
 import pandas as pd
 import torch
@@ -70,10 +77,32 @@ MODELS = {
 }
 
 
+# ------------------------------------------------------------ bookkeeping
+def git_commit():
+    """Short hash of the current commit, so every results file can be traced to its code."""
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
+                                       stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        return "unknown"
+
+
+def _sync(device):
+    """GPU work is asynchronous: wait for it to finish before reading the clock."""
+    if str(device).startswith("cuda"):
+        torch.cuda.synchronize()
+
+
 # ---------------------------------------------------------------- training
-def train_regressor(model, X, y, w, epochs=15, lr=2e-3, wd=1e-2, bs=256, seed=SEED, device=None):
+def train_regressor(model, X, y, w, epochs=15, lr=2e-3, wd=1e-2, bs=256, seed=SEED,
+                    device=None, return_history=False):
     """Weighted L1 loss (degrading snapshots count `w` times more than healthy ones,
-    because the headline metric is measured on the degrading ones). Fixed epochs."""
+    because the headline metric is measured on the degrading ones). Fixed epochs.
+
+    return_history=False -> returns the model (old behaviour, so other callers still work).
+    return_history=True  -> returns (model, epoch_losses), where epoch_losses[e] is the
+                            mean training loss over the batches of epoch e.
+    """
     device = device or get_device()
     set_seed(seed)
     torch.backends.cudnn.deterministic = True
@@ -84,8 +113,10 @@ def train_regressor(model, X, y, w, epochs=15, lr=2e-3, wd=1e-2, bs=256, seed=SE
     dl = DataLoader(ds, batch_size=bs, shuffle=True, generator=torch.Generator().manual_seed(seed))
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=lr, total_steps=epochs * len(dl))
+    epoch_losses = []
     for _ in range(epochs):
         model.train()
+        running, n_batches = 0.0, 0
         for xb, yb, wb in dl:
             xb, yb, wb = xb.to(device), yb.to(device), wb.to(device)
             opt.zero_grad()
@@ -93,6 +124,11 @@ def train_regressor(model, X, y, w, epochs=15, lr=2e-3, wd=1e-2, bs=256, seed=SE
             loss.backward()
             opt.step()
             sched.step()
+            running += loss.item()          # .item() copies one number to the CPU
+            n_batches += 1
+        epoch_losses.append(running / n_batches)
+    if return_history:
+        return model, epoch_losses
     return model
 
 
@@ -106,30 +142,63 @@ def predict_reg(model, X, bs=1024):
 
 
 # -------------------------------------------------------------------- LOBO
+def _fold(X, meta, b):
+    """Train/test split for held-out bearing b, standardised with TRAINING bearings only."""
+    te = (meta["bearing"] == b).to_numpy()
+    tr = ~te
+    mu = X[tr].mean(axis=(0, 1), keepdims=True)
+    sd = X[tr].std(axis=(0, 1), keepdims=True) + 1e-6
+    return tr, te, (X[tr] - mu) / sd, (X[te] - mu) / sd
+
+
 def run_femto_models(X, y, meta, models=("GRU", "TCN", "Transformer"), seeds=(1,),
                      epochs=15, w_post=4.0, bearings=None, verbose=True):
     """Leave-one-bearing-out. Features are standardised with the TRAINING bearings'
-    mean/std only. Returns a long table: seed, model, bearing, MAE_post, MAE_all, params."""
+    mean/std only. Returns a long table: seed, model, bearing, MAE_post, MAE_all, params,
+    final training loss, training time. The commit hash is stored in df.attrs["commit"]."""
     post_all = meta["post_fpt"].to_numpy().astype(bool)
     names = bearings or sorted(meta["bearing"].unique())
+    device = get_device()
     rows = []
     for seed in seeds:
         for b in names:
-            te = (meta["bearing"] == b).to_numpy()
-            tr = ~te
-            mu = X[tr].mean(axis=(0, 1), keepdims=True)
-            sd = X[tr].std(axis=(0, 1), keepdims=True) + 1e-6
-            Xtr, Xte = (X[tr] - mu) / sd, (X[te] - mu) / sd
+            tr, te, Xtr, Xte = _fold(X, meta, b)
             w = np.where(post_all[tr], w_post, 1.0)
             for name in models:
                 set_seed(seed)                      # seeds the initial weights
                 model = MODELS[name]()
-                train_regressor(model, Xtr, y[tr], w, epochs=epochs, seed=seed)
+                _sync(device)
+                t0 = time.perf_counter()
+                model, hist = train_regressor(model, Xtr, y[tr], w, epochs=epochs, seed=seed,
+                                              device=device, return_history=True)
+                _sync(device)
+                train_s = time.perf_counter() - t0
                 p = predict_reg(model, Xte)
                 err = np.abs(p - y[te])
                 rows.append({"seed": seed, "model": name, "bearing": b,
                              "MAE_post": float(err[post_all[te]].mean()), "MAE_all": float(err.mean()),
-                             "n_post": int(post_all[te].sum()), "params": count_params(model)})
+                             "n_post": int(post_all[te].sum()), "params": count_params(model),
+                             "final_train_loss": hist[-1], "train_s": train_s})
             if verbose:
                 print(f"seed {seed}  held-out {b} done", flush=True)
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    df.attrs["commit"] = git_commit()
+    return df
+
+
+# ---------------------------------------------------------- reproducibility
+def repro_check(X, y, meta, model_name="GRU-L", bearing="Bearing1_1", seed=1, epochs=2, w_post=4.0):
+    """Train the same model on the same fold twice with the same seed and compare the
+    per-epoch training losses. Identical (or differences around 1e-5 or smaller on a GPU)
+    means the seeding is complete; clearly different means something is not seeded."""
+    post_all = meta["post_fpt"].to_numpy().astype(bool)
+    tr, _, Xtr, _ = _fold(X, meta, bearing)
+    w = np.where(post_all[tr], w_post, 1.0)
+    runs = []
+    for _ in range(2):
+        set_seed(seed)
+        model = MODELS[model_name]()
+        _, hist = train_regressor(model, Xtr, y[tr], w, epochs=epochs, seed=seed, return_history=True)
+        runs.append(hist)
+    max_diff = max(abs(a - b) for a, b in zip(*runs))
+    return runs[0], runs[1], max_diff
